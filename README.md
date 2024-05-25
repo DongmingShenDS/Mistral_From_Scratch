@@ -1,2 +1,6 @@
 # Mistral_From_Scratch
-Mistral (train + fine-tune + inference) from scratch 
+Mistral and Mixtral from scratch with detailed documentation
+
+Mistral details: https://huggingface.co/docs/transformers/en/model_doc/mistral
+
+Mixtral details: https://huggingface.co/docs/transformers/en/model_doc/mixtral
