@@ -90,6 +90,7 @@ class Attention(nn.Module):
         self.wk = MaybeLora(args.dim, args.n_kv_heads * args.head_dim, bias=False)
         self.wv = MaybeLora(args.dim, args.n_kv_heads * args.head_dim, bias=False)
         self.wo = MaybeLora(args.n_heads * args.head_dim, args.dim, bias=False)
+        print(attention instantiated)
 
     def forward(
         self,
@@ -131,6 +132,7 @@ class Attention(nn.Module):
         output = output.view(seqlen_sum, self.n_heads * self.head_dim)
 
         assert isinstance(output, torch.Tensor)
+        print("attention computed, in forward")
 
         return self.wo(output)  # type: ignore
 
@@ -145,6 +147,7 @@ class FeedForward(nn.Module):
         self.w3 = MaybeLora(args.dim, args.hidden_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        print("linear layer feedforward forward")
         return self.w2(nn.functional.silu(self.w1(x)) * self.w3(x))  # type: ignore
 
 
@@ -159,6 +162,7 @@ class RMSNorm(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output = self._norm(x.float()).type_as(x)
+        print("layer norm calculated")
         return output * self.weight
 
 
@@ -262,6 +266,7 @@ class Transformer(nn.Module, LoRALoaderMixin):
         If doing pipeline parallelism, this will return the activations of the last layer of this stage.
         For the last stage, this will return the normalized final embeddings.
         """
+        print("forward_partial")
         assert (
             len(seqlens) <= self.args.max_batch_size
         ), f"Max batch size is {self.args.max_batch_size}, got batch size of {len(seqlens)}"
@@ -311,6 +316,7 @@ class Transformer(nn.Module, LoRALoaderMixin):
         seqlens: List[int],
         cache: Optional[BufferCache] = None,
     ) -> torch.Tensor:
+    print("attention block forward")
         h = self.forward_partial(input_ids, seqlens, cache=cache)
         if self.pipeline_rank < self.num_pipeline_ranks - 1:
             # ignore the intermediate activations as we'll get the final output from

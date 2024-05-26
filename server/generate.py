@@ -52,6 +52,8 @@ def generate(
             cache=cache,
         )
         logits = torch.log_softmax(prelogits, dim=-1)
+        print(logits)
+        print("generate, logits shape:", logits.shape)
 
         if last_token_prelogits is not None:
             # Pass > 1
@@ -114,16 +116,18 @@ def generate(
 def sample(logits: torch.Tensor, temperature: float, top_p: float) -> torch.Tensor:
     if temperature > 0:
         probs = torch.softmax(logits / temperature, dim=-1)
-        next_token = sample_top_p(probs, top_p)
+        next_token = sample_top_p(probs, top_p) #sampling
     else:
-        next_token = torch.argmax(logits, dim=-1).unsqueeze(0)
+        next_token = torch.argmax(logits, dim=-1).unsqueeze(0) #greedy dncoding
 
     return next_token.reshape(-1)
 
 
 def sample_top_p(probs: torch.Tensor, p: float) -> torch.Tensor:
     assert 0 <= p <= 1
-
+    print("sampling")
+    print(probs)
+    print(probs.shape)
     probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
     probs_sum = torch.cumsum(probs_sort, dim=-1)
     mask = probs_sum - probs_sort > p
