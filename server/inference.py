@@ -42,7 +42,7 @@ print(f"Total trainable parameters in the model: {total_params}")
 input = torch.tensor([args.vocab_size - 1] * (args.dim * args.max_batch_size)).to(device)
 seqlens = [args.dim] * args.max_batch_size  # Assuming all sequences are of maximum length for simplicity
 output = transformer(input, seqlens)
-print(output)
+# print(output)
 
 encoded_prompts = [[1, 2, 3, 1, 2, 5, 7], [4, 5, 6, 9, 4, 5, 6, 9]]
 generated_sequences = generate(
@@ -52,3 +52,5 @@ generated_sequences = generate(
     temperature=0.8,
     eos_id=None  # Replace with an appropriate eos_id if available
 )
+print(generated_sequences)
+print(generated_sequences.shape)
