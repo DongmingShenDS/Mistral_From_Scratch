@@ -10,8 +10,9 @@ import safetensors.torch
 import torch
 from simple_parsing.helpers import Serializable
 from torch import nn
-from xformers.ops.fmha import memory_efficient_attention  # type: ignore
+# from xformers.ops.fmha import memory_efficient_attention  # type: ignore => not working on MAC
 
+from mistral_inference.helpers2 import simple_scaled_dot_product_attention
 from mistral_inference.cache import (
     BufferCache,
     CacheInputMetadata,
@@ -204,10 +205,10 @@ class Attention(nn.Module):
         # Repeat keys and values to match number of query heads
         key, val = repeat_kv(key, val, self.repeats, dim=1)
 
-        # xformers memory_efficient_attention requires (B=1, S, H, D)
+        # xformers memory_efficient_attention requires (B=1, S, H, D) => output = memory_efficient_attention(xq, key, val, None if cache is None else cache.mask)
         # Reshape for attention function (assumed format for specific attention implementation)
         xq, key, val = xq[None, ...], key[None, ...], val[None, ...]
-        output = memory_efficient_attention(xq, key, val, None if cache is None else cache.mask)
+        output = simple_scaled_dot_product_attention(xq, key, val, None if cache is None else cache.mask)
         output = output.view(seqlen_sum, self.n_heads * self.head_dim)
 
         assert isinstance(output, torch.Tensor)   # Ensure output is tensor
@@ -585,6 +586,7 @@ class Transformer(nn.Module, LoRALoaderMixin):
         """
         # Perform the segment-specific forward pass to compute intermediate activations for this pipeline segment
         h = self.forward_partial(input_ids, seqlens, cache=cache)
+        print("hshape", h.shape)
         # Handle the output based on the rank of this pipeline segment
         # If this is not the last pipeline rank, send the intermediate activations to the next rank
         if self.pipeline_rank < self.num_pipeline_ranks - 1:

@@ -19,7 +19,13 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import torch
-from xformers.ops.fmha.attn_bias import (  # type: ignore
+# from xformers.ops.fmha.attn_bias import (  # type: ignore
+#     AttentionBias,
+#     BlockDiagonalCausalMask,
+#     BlockDiagonalCausalWithOffsetPaddedKeysMask,
+#     BlockDiagonalMask,
+# )
+from mistral_inference.xformers_dummy import (  # type: ignore
     AttentionBias,
     BlockDiagonalCausalMask,
     BlockDiagonalCausalWithOffsetPaddedKeysMask,

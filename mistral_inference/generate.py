@@ -68,7 +68,9 @@ def generate(
     # It then passes the concatenated prompt chunks through the model to get prelogits
     # If not the first pass, it calculates logits for the last token of each chunk in the previous pass.
     # It then calculates logits for each token in the chunk (excluding the first token) and updates last_token_prelogits to the prelogits of the last token in the last chunk.
+    print("reach here 0 0 ")
     for s in range(0, max_prompt_len, chunk_size):
+        print("reach here 1 ", s, cache)
         # Split encoded prompts into chunks of size chunk_size
         prompt_chunks = [p[s : s + chunk_size] for p in encoded_prompts]
         assert all(len(p) > 0 for p in prompt_chunks)
@@ -112,7 +114,9 @@ def generate(
     assert last_token_prelogits is not None     # Ensure last_token_prelogits is not None
     # Decode for a maximum of max_tokens tokens in a autoregressive manner
     # NOTE: Autoregressive token generation with state caching (every step only compute attention on last token)
+    print("reach here 0")
     for _ in range(max_tokens):
+        print("reach here 1")
         # Sample the next token from the last_token_prelogits using the specified temperature and top_p for randomness control
         next_token = sample(last_token_prelogits, temperature=temperature, top_p=0.8)
         if eos_id is not None:  # If an EOS token is specified
@@ -129,6 +133,7 @@ def generate(
         generated_tensors.append(next_token[:, None])
         # Pass the next token through the model to compute prelogits for the next generation step
         # This utilizes cached keys and values from previous tokens to efficiently compute attention only for the new token
+        print("reach here 2", cache)
         last_token_prelogits = model.forward(next_token, seqlens=[1] * B, cache=cache)
         # Ensure the shape of the prelogits is correct, confirming correct autoregressive behavior and caching usage
         assert last_token_prelogits.shape == (B, V)
