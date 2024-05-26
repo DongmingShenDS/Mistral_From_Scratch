@@ -131,7 +131,7 @@ def generate(
         # This utilizes cached keys and values from previous tokens to efficiently compute attention only for the new token
         last_token_prelogits = model.forward(next_token, seqlens=[1] * B, cache=cache)
         # Ensure the shape of the prelogits is correct, confirming correct autoregressive behavior and caching usage
-        assert last_token_prelogits.shape == (B, V)    
+        assert last_token_prelogits.shape == (B, V)
 
     # Convert the generated tensors into a list of lists of integers
     generated_tokens: List[List[int]]
