@@ -3,6 +3,7 @@ from moe import *
 from lora import *
 from generate import *
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 # Define necessary model arguments
 args = ModelArgs(
     n_layers=4,
@@ -30,7 +31,7 @@ transformer = Transformer(
     args=args,
     pipeline_rank=0,       # Assuming single machine, non-distributed
     num_pipeline_ranks=1   # Not using pipeline parallelism
-)
+).to(device)
 
 print(transformer)
 
@@ -41,3 +42,4 @@ print(f"Total trainable parameters in the model: {total_params}")
 input = torch.tensor([args.vocab_size - 1] * (args.dim * args.max_batch_size))
 seqlens = [args.dim] * args.max_batch_size  # Assuming all sequences are of maximum length for simplicity
 output = transformer(input, seqlens)
+print(output)
