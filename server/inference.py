@@ -33,7 +33,7 @@ transformer = Transformer(
     num_pipeline_ranks=1   # Not using pipeline parallelism
 ).to(device)
 
-print(transformer)
+# print(transformer)
 
 def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)
 total_params = count_parameters(transformer)
@@ -43,3 +43,12 @@ input = torch.tensor([args.vocab_size - 1] * (args.dim * args.max_batch_size)).t
 seqlens = [args.dim] * args.max_batch_size  # Assuming all sequences are of maximum length for simplicity
 output = transformer(input, seqlens)
 print(output)
+
+encoded_prompts = [[1, 2, 3, 1, 2, 5, 7], [4, 5, 6, 9, 4, 5, 6, 9]]
+generated_sequences = generate(
+    encoded_prompts=encoded_prompts,
+    model=transformer,
+    max_tokens=20,
+    temperature=0.8,
+    eos_id=None  # Replace with an appropriate eos_id if available
+)
