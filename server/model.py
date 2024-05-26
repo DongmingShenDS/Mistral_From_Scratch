@@ -90,7 +90,7 @@ class Attention(nn.Module):
         self.wk = MaybeLora(args.dim, args.n_kv_heads * args.head_dim, bias=False)
         self.wv = MaybeLora(args.dim, args.n_kv_heads * args.head_dim, bias=False)
         self.wo = MaybeLora(args.n_heads * args.head_dim, args.dim, bias=False)
-        print(attention instantiated)
+        print("attention instantiated")
 
     def forward(
         self,
