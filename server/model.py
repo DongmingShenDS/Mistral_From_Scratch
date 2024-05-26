@@ -316,7 +316,7 @@ class Transformer(nn.Module, LoRALoaderMixin):
         seqlens: List[int],
         cache: Optional[BufferCache] = None,
     ) -> torch.Tensor:
-    print("attention block forward")
+        print("attention block forward")
         h = self.forward_partial(input_ids, seqlens, cache=cache)
         if self.pipeline_rank < self.num_pipeline_ranks - 1:
             # ignore the intermediate activations as we'll get the final output from
