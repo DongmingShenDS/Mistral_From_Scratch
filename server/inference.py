@@ -39,7 +39,7 @@ def count_parameters(model): return sum(p.numel() for p in model.parameters() if
 total_params = count_parameters(transformer)
 print(f"Total trainable parameters in the model: {total_params}")
 
-input = torch.tensor([args.vocab_size - 1] * (args.dim * args.max_batch_size))
+input = torch.tensor([args.vocab_size - 1] * (args.dim * args.max_batch_size)).to(device)
 seqlens = [args.dim] * args.max_batch_size  # Assuming all sequences are of maximum length for simplicity
 output = transformer(input, seqlens)
 print(output)
