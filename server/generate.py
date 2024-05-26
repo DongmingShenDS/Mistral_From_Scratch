@@ -2,8 +2,8 @@ from typing import List, Optional, Tuple
 
 import torch
 
-from mistral_inference.cache import BufferCache
-from mistral_inference.model import Transformer
+from cache import BufferCache
+from model import Transformer
 
 
 @torch.inference_mode()

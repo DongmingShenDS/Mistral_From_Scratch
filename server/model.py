@@ -12,14 +12,14 @@ from simple_parsing.helpers import Serializable
 from torch import nn
 from xformers.ops.fmha import memory_efficient_attention  # type: ignore
 
-from mistral_inference.cache import (
+from cache import (
     BufferCache,
     CacheInputMetadata,
     CacheView,
 )
-from mistral_inference.lora import LoraArgs, LoRALinear, LoRALoaderMixin
-from mistral_inference.moe import MoeArgs, MoeLayer
-from mistral_inference.rope import apply_rotary_emb, precompute_freqs_cis
+from lora import LoraArgs, LoRALinear, LoRALoaderMixin
+from moe import MoeArgs, MoeLayer
+from rope import apply_rotary_emb, precompute_freqs_cis
 
 
 @dataclass
