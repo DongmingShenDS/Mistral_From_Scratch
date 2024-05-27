@@ -192,14 +192,15 @@ class BufferCache:
             device=self.device,
             dtype=torch.long,
         )
-        cache_positions = positions + batch_idx * self.max_seq_len #each batch has max_seq_len
+        cache_positions = positions + batch_idx * self.max_seq_len #each sample in batch has cache of length [max_seq_len]
+        first_prefill = seqpos[0] == 0
+        print("first_prefill, ", first_prefill)
         subsequent_prefill = any(seqlen > 1 for seqlen in seqlens)
         if first_prefill:
             assert all([pos == 0 for pos in seqpos]), seqpos
             mask = BlockDiagonalCausalMask.from_seqlens(seqlens).make_local_attention(
                 self.max_seq_len
             )
-            print("first prefill", first_prefill)
         elif subsequent_prefill:
             mask = BlockDiagonalMask.from_seqlens(
                 q_seqlen=seqlens,
@@ -208,7 +209,6 @@ class BufferCache:
                     for (s, cached_s) in zip(seqlens, self.kv_seqlens)
                 ],
             ).make_local_attention_from_bottomright(self.max_seq_len)
-            print("subsequent prefill", subsequent_prefill)
         else:
             mask = BlockDiagonalCausalWithOffsetPaddedKeysMask.from_seqlens(
                 q_seqlen=seqlens,
