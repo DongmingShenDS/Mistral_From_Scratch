@@ -44,7 +44,7 @@ transformer = Transformer(
 # output = transformer(input, seqlens)
 # print(output)
 
-encoded_prompts = [[1, 2, 3, 1, 2, 5, 7], [4, 5, 6, 9, 4, 5, 6, 9]]
+encoded_prompts = [[1, 2], [4, 5, 6]]
 generated_sequences = generate(
     encoded_prompts=encoded_prompts,
     model=transformer,
