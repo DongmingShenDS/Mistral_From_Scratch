@@ -14,7 +14,7 @@ args = ModelArgs(
     n_kv_heads=2,
     norm_eps=1e-6,
     vocab_size=100,     # vocab size (number of possible tokens)
-    max_batch_size=16,  # maximum batch size
+    max_batch_size=2,  # maximum batch size
     rope_theta=10000.0, #rotation angle
     moe=MoeArgs(
         num_experts=4,
@@ -47,7 +47,7 @@ transformer = Transformer(
 
 ## inference with cache
 
-encoded_prompts = [[1, 2], [4, 5, 6]]
+encoded_prompts = [[1, 2], [4, 5, 6], [2, 3]]
 generated_sequences = generate(
     encoded_prompts=encoded_prompts,
     model=transformer,

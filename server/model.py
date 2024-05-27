@@ -297,9 +297,11 @@ class Transformer(nn.Module, LoRALoaderMixin):
                 assert input_metadata is not None
                 assert isinstance(input_metadata, CacheInputMetadata)
                 cache_view = cache.get_view(local_layer_id, input_metadata)
+                print("cache_view", cache_view)
             else:
                 cache_view = None
             h = layer(h, freqs_cis, cache_view)
+            print(h)
 
         if cache is not None:
             cache.update_seqlens(seqlens)
