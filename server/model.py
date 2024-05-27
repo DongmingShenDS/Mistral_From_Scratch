@@ -123,7 +123,7 @@ class Attention(nn.Module):
 
         # Repeat keys and values to match number of query heads
         key, val = repeat_kv(key, val, self.repeats, dim=1)
-
+        print(cache.mask)
         # xformers requires (B=1, S, H, D)
         xq, key, val = xq[None, ...], key[None, ...], val[None, ...]
         output = memory_efficient_attention(
