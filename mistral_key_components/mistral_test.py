@@ -5,43 +5,20 @@ from typing import List, Optional
 
 import fire  # type: ignore
 import torch
-from mistral_inference.model import *
-from mistral_inference.moe import *
-from mistral_inference.lora import *
-from mistral_inference.generate import *
+from mistral_model import *
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
 # Define necessary model arguments
-args = ModelArgs(
-    n_layers=4,
-    head_dim=8,
-    hidden_dim=64,
-    n_heads=4,
-    dim=32,  # embedding dimension for each input token
-    n_kv_heads=2,
-    norm_eps=1e-6,
-    vocab_size=100,  # vocab size (number of possible tokens)
-    max_batch_size=3,  # maximum batch size
-    rope_theta=10000.0,  # rotation angle
-    moe=MoeArgs(
-        num_experts=4,
-        num_experts_per_tok=2,
-    ),
-    lora=LoraArgs(
-        rank=4,
-        scaling=2
-    )
-)
+args = ModelArgs()
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Instantiate the transformer directly
-transformer = Transformer(
-    args=args,
-    pipeline_rank=0,  # Assuming single machine, non-distributed
-    num_pipeline_ranks=1  # Not using pipeline parallelism
-).to(device)
+print(args)
+transformer_block = TransformerBlock(args=args).to(device)
+transformer = Transformer(args=args).to(device)
 
-print(transformer)
+print(transformer.tok_embeddings)
 
+exit(0)
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
