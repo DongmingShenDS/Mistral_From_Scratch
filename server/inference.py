@@ -47,11 +47,11 @@ transformer = Transformer(
 
 ## inference with cache
 
-encoded_prompts = [[1, 2], [4, 5, 6, 2, 3]]
+encoded_prompts = [[1, 2, 4], [4, 5, 6, 2, 3]]
 generated_sequences = generate(
     encoded_prompts=encoded_prompts,
     model=transformer,
-    max_tokens=1,
+    max_tokens=2,
     temperature=0.8,
     eos_id=None  # Replace with an appropriate eos_id if available
 )
