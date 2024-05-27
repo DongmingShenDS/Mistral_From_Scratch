@@ -217,7 +217,7 @@ class BufferCache:
                 .clamp(max=self.max_seq_len)
                 .tolist(),
             )
-
+        print("mask", mask)
         return CacheInputMetadata(
             positions=positions,
             cache_positions=cache_positions,
