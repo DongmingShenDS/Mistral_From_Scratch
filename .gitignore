@@ -8,13 +8,13 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+.DS_Store
 build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-.DS_Store
 lib/
 lib64/
 parts/
