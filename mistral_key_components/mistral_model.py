@@ -13,12 +13,12 @@ from typing import Optional
 @dataclass
 class ModelArgs:
     dim: int = 128      # embedding dimension for each input token and general dim in model layers
-    hidden_dim: int = 256   # hidden dimension used in ffn
     n_layers: int = 4   # number of transformer layers in the model
+    hidden_dim: int = 256   # hidden dimension used in ffn
+    head_dim: int = 32  # head dimension used in attention (conventionally set to hidden_dim / n_heads)
     n_heads: int = 8  # number of heads for the Q
     n_kv_heads: Optional[int] = None  # number of heads for the K and V (can be different from Q)
     vocab_size: int = 1000  # vocab size (number of possible tokens) usually from tokenizer.vocab_size
-    ffn_dim_multiplier: Optional[float] = None  # this is not used in Mistral b.c. hidden_dim is set directly
     norm_eps: float = 1e-5   # for numerical stability
     max_batch_size: int = 8     # maximum batch size
     max_seq_len: int = 64   # maximum sequence length (not directly used in Mistral)
@@ -26,9 +26,10 @@ class ModelArgs:
     rope_theta: float = 10000.0  # theta for rotary embeddings
 
 
-def precompute_freqs_pos_frequencis(
+def precompute_theta_pos_frequencies(
         head_dim: int, seq_len: int, device: torch.device, theta: float
 ) -> torch.Tensor:
+    # note: here seq_len is actual max_seq_len * 2
     assert head_dim % 2 == 0, "head_dim must be even as proposed in https://arxiv.org/pdf/2104.09864"
     # theta parameter = a sequence according to the paper
     # theta_i = 10000^(-2(i-1)/dim) for i in range(1, dim / 2 + 1)
@@ -52,7 +53,7 @@ def apply_rotary_embeddings(
 ) -> torch.Tensor:
     # Separate the last dimension pairs of 2 values (aka real and imaginary parts of the complex number) => make complex
     # Each pair of 2 consecutive values in head_dim is transformed into a single complex number (thus head_dim / 2
-    # (B, seq_len, H, head_dim) => (B, seq_len, H, head_dim / 2)
+    # (B, seq_len, H=n_heads, head_dim) => (B, seq_len, H, head_dim / 2)
     x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
     # Reshape feqs_complex tensor to match the shape of the x_complex tensor (use unsqueeze to add extra dimension of 1)
     # (seq_len, head_dim / 2) => (1, seq_len, 1, head_dim / 2)
@@ -91,6 +92,52 @@ class RMSNorm(nn.Module):
         return self.weight * self._norm(x.float()).type_as(x)
 
 
+class RollingBufferKVCache:
+    def __init__(self, max_batch_size, attn_window, n_kv_heads, head_dim):
+        # implemented based on idea from original Mistral paper https://arxiv.org/abs/2310.06825
+        self.max_batch_size = max_batch_size
+        self.attn_window = attn_window
+        self.n_kv_heads = n_kv_heads
+        self.head_dim = head_dim
+        # initialize the KV cache with zeros with shape (B, attn_window, n_kv_heads, Head_Dim)
+        self.cache_k = torch.zeros((self.max_batch_size, self.attn_window, self.n_kv_heads, self.head_dim))
+        self.cache_v = torch.zeros((self.max_batch_size, self.attn_window, self.n_kv_heads, self.head_dim))
+
+    def update_cache(self, xk, xv, batch_size, start_pos):
+        # get the position of rolling window cache using the modulo operation
+        # ensures that the position wraps around within the attn_window size
+        cache_position = start_pos % self.attn_window
+        # update the entry in the KV cache's respective calculated position with the new KV values
+        # fill (:B, idx) part of the (max_B, max_seq_len, n_kv_heads, Head_Dim) cache with (B, 1, n_kv_heads, Head_Dim)
+        # shape of xk and xv: (batch_size, 1, n_kv_heads, head_dim)
+        self.cache_k[:batch_size, cache_position:cache_position + 1] = xk
+        self.cache_v[:batch_size, cache_position:cache_position + 1] = xv
+
+    def update_cache_multiple(self, xk, xv, batch_size, start_pos, seq_len):
+        # used when seq_len > 1, yet in inference we only care about the seq_len = 1 case
+        # can be optimized in the future to support Mistral's pre-fill and chunking (to handle prompts)
+        for i in range(seq_len):
+            self.update_cache(xk[:, i:i+1, :, :], xv[:, i:i+1, :, :], batch_size, start_pos + i)
+
+    def retrieve_cache(self, batch_size, start_pos):
+        # calculate the effective start position considering the rolling buffer's nature
+        # NOTE: start_pos should be updated to be start_pos + seq_len when called after update_cache
+        effective_start_pos = start_pos % self.attn_window
+        # retrieve KV from the cache, split into 2 parts to handle the wrap-around
+        keys = torch.cat([
+            self.cache_k[:batch_size, effective_start_pos:, :, :],
+            self.cache_k[:batch_size, :effective_start_pos, :, :]
+        ], dim=1)
+        values = torch.cat([
+            self.cache_v[:batch_size, effective_start_pos:, :, :],
+            self.cache_v[:batch_size, :effective_start_pos, :, :]
+        ], dim=1)
+        # select the last seq_len tokens from the concatenated keys and values (to handle when < attn_window)
+        keys = keys[:, -start_pos:, :, :]
+        values = values[:, -start_pos:, :, :]
+        return keys, values
+
+
 class SelfAttention(nn.Module):
     # Decoder only with causal attention (only work for inference)
     # only care about current token and its corresponding attention (with support from the KV Cache)
@@ -104,7 +151,9 @@ class SelfAttention(nn.Module):
         # get num times the KV should be repeated in GQA
         self.n_rep = self.n_heads_q // self.n_kv_heads
         # dim of each head = dim / n_heads (the part of the embedding that each head will be responsible for)
-        self.head_dim = args.dim // args.n_heads
+        self.head_dim = args.head_dim
+        # cache size or attention window size, if not specified, default to full attention
+        self.attn_window = args.attn_window if args.attn_window is not None else args.max_seq_len
 
         # q k v o weights in transformer attention
         self.wq = nn.Linear(args.dim, self.n_heads_q * self.head_dim)   # for Q
@@ -112,9 +161,9 @@ class SelfAttention(nn.Module):
         self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim)  # for V
         self.wo = nn.Linear(self.n_heads_q * self.head_dim, args.dim)   # for O (here n_heads_q * head_dim == dim)
 
-        # Cache for K and V
-        self.cache_k = torch.zeros((args.max_batch_size, self.max_seq_len, self.n_kv_heads, self.head_dim))
-        self.cache_v = torch.zeros((args.max_batch_size, self.max_seq_len, self.n_kv_heads, self.head_dim))
+        # KV Cache with support of Sliding Window Attention & Rolling Buffer Cache
+        # this is modified from the Llama implementation which does not support rolling buffer
+        self.kv_cache = RollingBufferKVCache(args.max_batch_size, self.attn_window, self.n_kv_heads, self.head_dim)
 
     def repeat_kv(self, kv: torch.Tensor) -> torch.Tensor:  # just copy, but can be optimized...
         # in GQA, each Q group shares the same KV heads, thus just repeat KV heads for the Q in the same group
@@ -138,6 +187,7 @@ class SelfAttention(nn.Module):
         # goal shape: (B, 1, Dim) => (B, 1, Dim)
 
         batch_size, seq_len, _ = x.shape    # (B, 1, Dim)
+        assert seq_len == 1, "only support 1D input for now for debugging"  # TODO test support when seq_len > 1
         # compute Q K V from the weights wq wk wv
         # (B, 1, Dim) => (B, 1, n_heads_q * Head_Dim)
         xq = self.wq(x)
@@ -160,13 +210,11 @@ class SelfAttention(nn.Module):
 
         # replace the entry in the KV cache's respective position (aka update KV Cache)
         # fill (:B, idx) part of the (max_B, max_seq_len, n_kv_heads, Head_Dim) cache with (B, 1, n_kv_heads, Head_Dim)
-        self.cache_k[:batch_size, start_pos:start_pos + seq_len] = xk
-        self.cache_v[:batch_size, start_pos:start_pos + seq_len] = xv
+        self.kv_cache.update_cache(xk, xv, batch_size, start_pos)
 
         # retrieve complete K and V from KV Cache for Attention Computation
         # (B, prefix_seq_len, n_kv_heads, Head_Dim)
-        keys = self.cache_k[:batch_size, :start_pos + seq_len, :, :]
-        values = self.cache_v[:batch_size, :start_pos + seq_len, :, :]
+        keys, values = self.kv_cache.retrieve_cache(batch_size, start_pos + seq_len)
 
         # in GQA, each Q group shares the same KV heads, thus just repeat KV heads for the Q in the same group
         # (B, prefix_seq_len, n_kv_heads, Head_Dim) => (B, prefix_seq_len, n_heads_q, Head_Dim)
@@ -234,7 +282,6 @@ class TransformerBlock(nn.Module):
         self.n_head = args.n_heads
         self.dim = args.dim
         self.hidden_dim = args.hidden_dim
-        self.head_dim = args.dim // args.n_heads  # this is conventional!!! (concat of heads should give dim)
         # Model Components
         self.attention = SelfAttention(args)
         self.feed_forward = FeedForward(args)
@@ -264,7 +311,7 @@ class Transformer(nn.Module):
         self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
-        # input tokens embedding
+        # input tokens embedding (note: vocab_size is handled internally by nn.Embedding)
         self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
         # each transformer layers in (Nx part) of the model, total self.n_layers blocks
         # NOTE: this is the most important part of the model and is where different LLMs architectures are implemented
@@ -274,8 +321,8 @@ class Transformer(nn.Module):
         # output layer
         self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
         # precomputed frequencies for ROPE positional encoding (https://arxiv.org/pdf/2104.09864)
-        self.freqs_complex = precompute_freqs_pos_frequencis(   # to precompute the sin and cos in the paper
-            self.args.dim // self.args.n_heads, self.args.max_seq_len * 2,
+        self.freqs_complex = precompute_theta_pos_frequencies(   # to precompute the sin and cos in the paper
+            self.args.head_dim, self.args.max_seq_len * 2,
             device=self.device, theta=args.rope_theta
         )
 
@@ -298,12 +345,13 @@ class Transformer(nn.Module):
         batch_size, seq_len = tokens.shape
         assert seq_len == 1, "One token at a time at inference time"
         # (B, Seq_len) -> (B, Seq_len, dim)
+        # the input should be tokens within the vocabulary range, and the output will be the embedding
         h = self.tok_embeddings(tokens)
         # Retrieve the pairs (m, theta) corresponding to the positions [start_pos, start_pos + seq_len]
         freqs_complex = self.freqs_complex[start_pos:start_pos + seq_len]
         # Apply precomputed frequencies to the encoding layers for positional encoding
         for layer in self.layers:
-            h = layer(h, freqs_complex, start_pos, None)    # these are the Nx TransformerBlock layers
+            h = layer(h, start_pos, freqs_complex)    # these are the Nx TransformerBlock layers
         # Apply RMS Normalization after all layers
         h = self.norm(h)
         # Output layer

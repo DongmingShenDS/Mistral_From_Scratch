@@ -294,7 +294,7 @@ class Transformer(nn.Module):
         freqs_complex = self.freqs_complex[start_pos:start_pos + seq_len]
         # Apply precomputed frequencies to the encoding layers for positional encoding
         for layer in self.layers:
-            h = layer(h, freqs_complex, start_pos, None)    # these are the Nx TransformerBlock layers
+            h = layer(h, start_pos, freqs_complex)    # these are the Nx TransformerBlock layers
         # Apply RMS Normalization after all layers
         h = self.norm(h)
         # Output layer
