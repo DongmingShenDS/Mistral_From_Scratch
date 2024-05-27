@@ -80,7 +80,6 @@ def generate(
             ).cumsum(dim=0)
             - 1,
         )
-        print("generate: ", last_token_prelogits.shape)
         assert last_token_prelogits.shape == (B, V)
 
     # decode
@@ -91,7 +90,7 @@ def generate(
     print("decode", last_token_prelogits, last_token_prelogits.shape)
     for _ in range(max_tokens):
         next_token = sample(last_token_prelogits, temperature=temperature, top_p=0.8)
-        print(next_token)
+        print("last_token_prelogits", last_token_prelogits.shape)
 
         if eos_id is not None:
             is_finished = is_finished ^ (next_token == eos_id).cpu()
