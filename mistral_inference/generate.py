@@ -43,7 +43,7 @@ def generate(
     seqlens = [len(x) for x in encoded_prompts]
 
     # Initialize Cache
-    cache_window = max(seqlens) + max_tokens
+    cache_window = 6  # DS: max(seqlens) + max_tokens
     cache = BufferCache(
         model.n_local_layers,
         model.args.max_batch_size,
@@ -61,16 +61,15 @@ def generate(
     # Set one chunk size to maximum prompt length if not specified
     max_prompt_len = max(seqlens)
     if chunk_size is None:
-        chunk_size = max_prompt_len
+        chunk_size = 1 # DS: chunk_size = max_prompt_len
 
     # Encode prompt by chunks
     # It encodes the prompt by splitting it into chunks of size chunk_size
     # It then passes the concatenated prompt chunks through the model to get prelogits
     # If not the first pass, it calculates logits for the last token of each chunk in the previous pass.
     # It then calculates logits for each token in the chunk (excluding the first token) and updates last_token_prelogits to the prelogits of the last token in the last chunk.
-    print("reach here 0 0 ")
     for s in range(0, max_prompt_len, chunk_size):
-        print("reach here 1 ", s, cache)
+        print("reach here", s, cache)
         # Split encoded prompts into chunks of size chunk_size
         prompt_chunks = [p[s : s + chunk_size] for p in encoded_prompts]
         assert all(len(p) > 0 for p in prompt_chunks)

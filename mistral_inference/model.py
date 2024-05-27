@@ -12,7 +12,7 @@ from simple_parsing.helpers import Serializable
 from torch import nn
 # from xformers.ops.fmha import memory_efficient_attention  # type: ignore => not working on MAC
 
-from mistral_inference.helpers2 import simple_scaled_dot_product_attention
+from mistral_inference.helpers import simple_scaled_dot_product_attention
 from mistral_inference.cache import (
     BufferCache,
     CacheInputMetadata,
@@ -183,11 +183,17 @@ class Attention(nn.Module):
                 S is the sequence length, H is the number of attention heads, and D is the head dimension.
         """
         # Apply linear transformations and reshape for multi-head attention
+        # x shape = (B, dim) = (B, n_heads * head_dim)
+        print("x.shape", x.shape)
+        # xq, xk, xv shape = (B, n_heads * head_dim), (B, n_kv_heads * head_dim), (B, n_kv_heads * head_dim)
         seqlen_sum, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        print("xq.shape, xk.shape, xv.shape 1", xq.shape, xk.shape, xv.shape)
         xq = xq.view(seqlen_sum, self.n_heads, self.head_dim)
         xk = xk.view(seqlen_sum, self.n_kv_heads, self.head_dim)
         xv = xv.view(seqlen_sum, self.n_kv_heads, self.head_dim)
+        # xq, xk, xv shape = (B, n_heads, head_dim), (B, n_kv_heads, head_dim), (B, n_kv_heads, head_dim)
+        print("xq.shape, xk.shape, xv.shape 2", xq.shape, xk.shape, xv.shape)
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)  # Apply rotary embeddings
 
         # Handle caching for keys and values
@@ -204,10 +210,12 @@ class Attention(nn.Module):
 
         # Repeat keys and values to match number of query heads
         key, val = repeat_kv(key, val, self.repeats, dim=1)
-
+        print("xq.shape, key.shape, val.shape 3", xq.shape, key.shape, val.shape)
         # xformers memory_efficient_attention requires (B=1, S, H, D) => output = memory_efficient_attention(xq, key, val, None if cache is None else cache.mask)
         # Reshape for attention function (assumed format for specific attention implementation)
         xq, key, val = xq[None, ...], key[None, ...], val[None, ...]
+        # xq, key, val shape = (1, B, n_heads, head_dim), (1, B, n_heads, head_dim), (1, B, n_heads, head_dim) due to None
+        print("xq.shape, key.shape, val.shape 4", xq.shape, key.shape, val.shape)
         output = simple_scaled_dot_product_attention(xq, key, val, None if cache is None else cache.mask)
         output = output.view(seqlen_sum, self.n_heads * self.head_dim)
 

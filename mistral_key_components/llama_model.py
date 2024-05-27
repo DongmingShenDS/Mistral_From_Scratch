@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from dataclasses import dataclass
 from typing import Optional
-# This Class ignores some MOE components in the original model for testing purposes
+# This Class ignores some MOE components in the original model for testing purposes (same as Llama)
 
 
 @dataclass
@@ -300,21 +300,6 @@ class Transformer(nn.Module):
         # Output layer
         output = self.output(h)
         return output
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def main():
