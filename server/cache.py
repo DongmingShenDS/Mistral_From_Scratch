@@ -123,6 +123,7 @@ class BufferCache:
         n_kv_heads: int,
         head_dim: int,
     ):
+        print("instantiate cache")
         self.max_seq_len = max_seq_len
         self.n_kv_heads = n_kv_heads
         self.head_dim = head_dim
@@ -184,14 +185,17 @@ class BufferCache:
             [torch.arange(pos, pos + seqlen) for pos, seqlen in zip(seqpos, seqlens)]
         ).to(device=self.device, dtype=torch.long)
 
+        print("cache positions", positions)
+
         batch_idx = torch.tensor(
             sum([[i] * seqlen for i, seqlen in enumerate(seqlens)], []),
             device=self.device,
             dtype=torch.long,
         )
         cache_positions = positions + batch_idx * self.max_seq_len
-
+        print(seqpos[0])
         first_prefill = seqpos[0] == 0
+        print("first_prefill, ", first_prefill)
         subsequent_prefill = any(seqlen > 1 for seqlen in seqlens)
         if first_prefill:
             assert all([pos == 0 for pos in seqpos]), seqpos

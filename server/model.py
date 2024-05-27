@@ -189,6 +189,7 @@ class TransformerBlock(nn.Module):
     def forward(
         self, x: torch.Tensor, freqs_cis: torch.Tensor, cache: Optional[CacheView]
     ) -> torch.Tensor:
+        print("transformer block forward")
         r = self.attention.forward(self.attention_norm(x), freqs_cis, cache)
         h = x + r
         r = self.feed_forward.forward(self.ffn_norm(h))
@@ -316,7 +317,7 @@ class Transformer(nn.Module, LoRALoaderMixin):
         seqlens: List[int],
         cache: Optional[BufferCache] = None,
     ) -> torch.Tensor:
-        print("attention block forward")
+        print("attention forward")
         h = self.forward_partial(input_ids, seqlens, cache=cache)
         if self.pipeline_rank < self.num_pipeline_ranks - 1:
             # ignore the intermediate activations as we'll get the final output from
