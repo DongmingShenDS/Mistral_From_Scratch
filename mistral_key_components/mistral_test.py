@@ -11,7 +11,7 @@ from mistral_inference import *
 # Define necessary model arguments
 args = ModelArgs(
     dim=128,
-    n_layers=4,
+    n_layers=1,
     hidden_dim=256,
     head_dim=16,
     n_heads=8,
@@ -21,11 +21,61 @@ args = ModelArgs(
     max_batch_size=8,
     max_seq_len=64,
     attn_window=4,
-    rope_theta=10000.0
+    rope_theta=10000.0,
+    moe=MoeArgs(n_experts=4, n_experts_per_tok=2),
+    debug=False
 )
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 mistral = Mistral(args)
+print(mistral.model)
+
+import torch
+from torchviz import make_dot
+
+# Define your model
+model = Transformer(args)  # Replace your_model with your actual model
+x = torch.ones(3, 1, dtype=torch.long)  # Adjust the size according to your input
+y = model(x, 0)
+
+# Create a dictionary to rename or remove nodes
+node_attr = dict(style='filled', shape='box', align='left', fontsize='12', ranksep='0.1', height='0.2')
+params = {name: param for name, param in model.named_parameters() if 'bias' not in name}
+
+# Make the dot graph
+dot = make_dot(y, params=params)
+
+# Optional: Simplify names in the graph for readability
+simple_names = {}
+for node in dot.body:
+    if 'Conv' in node or 'BatchNorm' in node or 'ReLU' in node:
+        name = node.split('[')[0]
+        simple_names[name] = name.replace('\"', '').split('/')[-1]
+
+# Update node names
+for i in range(len(dot.body)):
+    for key, value in simple_names.items():
+        if key in dot.body[i]:
+            dot.body[i] = dot.body[i].replace(key, value)
+
+# Render the pruned graph to a file
+dot.render('model_visualization', format='png')
+exit(0)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 encoded_prompts = [[10, 2, 4, 4, 3, 7, 8], [4, 5, 6, 2, 3, 8, 9], [4, 5, 6, 2, 3, 4, 5, 6, 2, 3]]
 

@@ -61,7 +61,7 @@ def generate(
     # Set one chunk size to maximum prompt length if not specified
     max_prompt_len = max(seqlens)
     if chunk_size is None:
-        chunk_size = 1 # DS: chunk_size = max_prompt_len
+        chunk_size = 2 # DS: chunk_size = max_prompt_len
 
     # Encode prompt by chunks
     # It encodes the prompt by splitting it into chunks of size chunk_size

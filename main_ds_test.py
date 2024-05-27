@@ -23,14 +23,14 @@ args = ModelArgs(
     vocab_size=100,  # vocab size (number of possible tokens)
     max_batch_size=3,  # maximum batch size
     rope_theta=10000.0,  # rotation angle
-    moe=MoeArgs(
-        num_experts=4,
-        num_experts_per_tok=2,
-    ),
-    lora=LoraArgs(
-        rank=4,
-        scaling=2
-    )
+    # moe=MoeArgs(
+    #     num_experts=4,
+    #     num_experts_per_tok=2,
+    # ),
+    # lora=LoraArgs(
+    #     rank=4,
+    #     scaling=2
+    # )
 )
 
 # Instantiate the transformer directly

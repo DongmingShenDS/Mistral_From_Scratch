@@ -2,15 +2,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from dataclasses import dataclass
-from typing import Optional
+import dataclasses
+from typing import Optional, List
 # This file migrated from llama_model for testing only currently
-# TODO: add MoE support in Mixtral
+# TODO: add RollingBuffer support in Mistral - finished
+# TODO: add MoE support in Mixtral - finished
 # TODO: add LoRA support in Mistral
-# TODO: add RollingBuffer support in Mistral
 
 
-@dataclass
+@dataclasses.dataclass
+class MoeArgs:  # MoE in mistral
+    n_experts: int
+    n_experts_per_tok: int
+
+
+@dataclasses.dataclass
 class ModelArgs:
     dim: int = 128      # embedding dimension for each input token and general dim in model layers
     n_layers: int = 4   # number of transformer layers in the model
@@ -24,51 +30,53 @@ class ModelArgs:
     max_seq_len: int = 64   # maximum sequence length (not directly used in Mistral)
     attn_window: Optional[int] = None  # attention window and rolling buffer size, if None, it is set to max_seq_len
     rope_theta: float = 10000.0  # theta for rotary embeddings
+    moe: Optional[MoeArgs] = None   # if set then use MoE otherwise normal FFN
+    debug: Optional[bool] = False   # if verbose
 
 
-def precompute_theta_pos_frequencies(
-        head_dim: int, seq_len: int, device: torch.device, theta: float
-) -> torch.Tensor:
-    # note: here seq_len is actual max_seq_len * 2
-    assert head_dim % 2 == 0, "head_dim must be even as proposed in https://arxiv.org/pdf/2104.09864"
-    # theta parameter = a sequence according to the paper
-    # theta_i = 10000^(-2(i-1)/dim) for i in range(1, dim / 2 + 1)
-    # shape (both theta_denominator and theta): (head_dim / 2)
-    theta_numerator = torch.arange(0, head_dim, 2).float()
-    theta = 1.0 / (theta ** (theta_numerator / head_dim)).to(device)
-    # build the "m" in the paper (aka the positions)
-    # shape: (seq_len)
-    m = torch.arange(seq_len, device=device)
-    # Multiply each theta by each position using the outer product (for all possible combinations of the two)
-    # Shape: (Seq_Len) outer_product* (Head_Dim / 2) -> (Seq_Len, Head_Dim / 2)
-    freqs = torch.outer(m, theta).float()
-    # Compute the complex number polar form: c = R * exp(m * theta) w/ R = 1
-    # (seq_len, head_dim / 2) -> (seq_len, head_dim / 2)
-    freqs_complex = torch.polar(torch.ones_like(freqs), freqs)
-    return freqs_complex
+class MoE(nn.Module):  # MoE explained: https://en.wikipedia.org/wiki/Mixture_of_experts
+    # the only difference in Mixtral MOE: after attention, instead of RMS=>MLP, it has RMS=>MOE
+    def __init__(self, experts: List[nn.Module], gate: nn.Module, moe_args: MoeArgs):
+        super().__init__()
+        assert len(experts) == moe_args.n_experts, "Number of experts must be equal to n_experts"
+        # create the components in MoE
+        self.experts = nn.ModuleList(experts)
+        self.gate = gate    # this is for MoE's gating mechanism in selecting the expert
+        self.moe_args = moe_args
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # NOTE: in the mistral paper, all input/output size used are (B * seq_len, Dim) instead of (B, seq_len, Dim)
+        # goal shape: (B, seq_len, Dim) = > (B, seq_len, Dim)
+        B, seq_len, dim = x.shape
+        # this matches official mistral's input shape (B * seq_len, Dim)
+        flat_x = x.view(B * seq_len, dim)
+        # Get the gate logits for each input token using a gate module
+        # (B * seq_len, Dim) gate=> (B * seq_len, n_experts)
+        gate_logits = self.gate(flat_x)  # recall gate is linear with (Dim, n_experts)
+        # Get the top k experts for each input token, using torch.topk
+        # weights=logits, selected_experts=indices
+        # (B * seq_len, n_experts) => (B * seq_len, n_experts_per_tok)
+        weights, selected_experts = torch.topk(gate_logits, self.moe_args.n_experts_per_tok)
+        # Normalize the weights with softmax, to get the selected top k experts' weights on the tokens
+        weights = F.softmax(weights, dim=1, dtype=torch.float).to(x.dtype)
 
-def apply_rotary_embeddings(
-        x: torch.Tensor, freqs_complex: torch.Tensor, device: torch.device
-) -> torch.Tensor:
-    # Separate the last dimension pairs of 2 values (aka real and imaginary parts of the complex number) => make complex
-    # Each pair of 2 consecutive values in head_dim is transformed into a single complex number (thus head_dim / 2
-    # (B, seq_len, H=n_heads, head_dim) => (B, seq_len, H, head_dim / 2)
-    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-    # Reshape feqs_complex tensor to match the shape of the x_complex tensor (use unsqueeze to add extra dimension of 1)
-    # (seq_len, head_dim / 2) => (1, seq_len, 1, head_dim / 2)
-    feqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)  # recall .unsqueeze(i) means add extra dimension at i
-    # Element-wise multiplication with broadcasting
-    # This results in the rotation of the complex number as shown in the Figure 1 of the paper
-    # (B, seq_len, H, head_dim / 2) * (1, seq_len, 1, head_dim / 2) => (B, seq_len, H, head_dim / 2)
-    x_rotated = x_complex * feqs_complex
-    # Convert the complex number back to the real number: the additional 2 in the final dim is for real from imag
-    # (B, seq_len, H, head_dim / 2) => (B, seq_len, H * head_dim / 2, 2)
-    x_real = torch.view_as_real(x_rotated)
-    # Flatten the last two dimensions back into 2nd last dimension, using reshape to have same size with x
-    # (B, seq_len, H * head_dim / 2, 2) => (B, seq_len, H * head_dim)
-    x_out = x_real.reshape(*x.shape)
-    return x_out.type_as(x).to(device)
+        # init results: (B * seq_len, Dim)
+        results = torch.zeros_like(flat_x)
+        # Iterate over each expert to compute the weighted sum of the outputs from each selected top k experts,
+        for i, expert in enumerate(self.experts):
+            # for each expert: retrieves only the batch_idx & selected_exp_idx this expert is responsible for
+            batch_idx, selected_exp_idx = torch.where(selected_experts == i)
+            # (K, Dim) => (K, Dim), where K is how many tokens this expert is responsible for
+            expert_out = expert(flat_x[batch_idx])  # recall expert is FFN with Dim=>Dim
+            # (K, 1), where K is how many tokens this expert is responsible for
+            expert_w = weights[batch_idx, selected_exp_idx, None]
+            # add the experts' weighted sum output to the corresponding tokens
+            # expert_w * expert_out: (K, 1) * (K, Dim) => (K, Dim)
+            # results: still (B * seq_len, Dim), where the corresponding tokens are updated
+            results[batch_idx] += expert_w * expert_out
+            # reshape results: (B * seq_len, Dim) => (batch_size, seq_len, dim)
+        results = results.view(B, seq_len, dim)
+        return results
 
 
 class RMSNorm(nn.Module):
@@ -144,6 +152,7 @@ class SelfAttention(nn.Module):
     # Extended support for GQA (grouped query attention)
     def __init__(self, args: ModelArgs):
         super().__init__()
+        self.debug = args.debug
         # set the number of KV heads for GQA (see the paper), default to Q heads (then just MHA)
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         # set the number of Q heads, should always be args.n_heads
@@ -185,7 +194,7 @@ class SelfAttention(nn.Module):
         # recall start_pos = the position of the token in the sequence we are dealing with
         # this is the standard self-attention mechanism computation with slight modifications (Llama / Mistral)
         # goal shape: (B, 1, Dim) => (B, 1, Dim)
-
+        if self.debug: print("SelfAttention input shape", x.shape)
         batch_size, seq_len, _ = x.shape    # (B, 1, Dim)
         assert seq_len == 1, "only support 1D input for now for debugging"  # TODO test support when seq_len > 1
         # compute Q K V from the weights wq wk wv
@@ -205,8 +214,8 @@ class SelfAttention(nn.Module):
         xv = xv.reshape(batch_size, seq_len, self.n_kv_heads, self.head_dim)
 
         # apply RoPE on Q and K, both should have the same shape before and after RoPE
-        xq = apply_rotary_embeddings(xq, freqs_complex, x.device)    # (B, 1, n_heads_q, Head_Dim)
-        xk = apply_rotary_embeddings(xk, freqs_complex, x.device)    # (B, 1, n_kv_heads, Head_Dim)
+        xq = self.apply_rotary_embeddings(xq, freqs_complex, x.device)    # (B, 1, n_heads_q, Head_Dim)
+        xk = self.apply_rotary_embeddings(xk, freqs_complex, x.device)    # (B, 1, n_kv_heads, Head_Dim)
 
         # replace the entry in the KV cache's respective position (aka update KV Cache)
         # fill (:B, idx) part of the (max_B, max_seq_len, n_kv_heads, Head_Dim) cache with (B, 1, n_kv_heads, Head_Dim)
@@ -248,11 +257,34 @@ class SelfAttention(nn.Module):
         output = self.wo(output)
         return output
 
+    def apply_rotary_embeddings(
+            self, x: torch.Tensor, freqs_complex: torch.Tensor, device: torch.device
+    ) -> torch.Tensor:
+        # Separate the last dim pairs of 2 values (aka real and imaginary parts of the complex number) => make complex
+        # Each pair of 2 consecutive values in head_dim is transformed into a single complex number (thus head_dim / 2
+        # (B, seq_len, H=n_heads, head_dim) => (B, seq_len, H, head_dim / 2)
+        x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+        # Reshape feqs_complex to match the shape of the x_complex tensor (use unsqueeze to add extra dimension of 1)
+        # (seq_len, head_dim / 2) => (1, seq_len, 1, head_dim / 2)
+        feqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)  # recall .unsqueeze(i) means add extra dimension at i
+        # Element-wise multiplication with broadcasting
+        # This results in the rotation of the complex number as shown in the Figure 1 of the paper
+        # (B, seq_len, H, head_dim / 2) * (1, seq_len, 1, head_dim / 2) => (B, seq_len, H, head_dim / 2)
+        x_rotated = x_complex * feqs_complex
+        # Convert the complex number back to the real number: the additional 2 in the final dim is for real from imag
+        # (B, seq_len, H, head_dim / 2) => (B, seq_len, H * head_dim / 2, 2)
+        x_real = torch.view_as_real(x_rotated)
+        # Flatten the last two dimensions back into 2nd last dimension, using reshape to have same size with x
+        # (B, seq_len, H * head_dim / 2, 2) => (B, seq_len, H * head_dim)
+        x_out = x_real.reshape(*x.shape)
+        return x_out.type_as(x).to(device)
+
 
 class FeedForward(nn.Module):
     # FFN with SwiGLU activation
     def __init__(self, args: ModelArgs):
         super().__init__()
+        self.debug = args.debug
         hidden_dim = args.hidden_dim
 
         # ffn weights initialize
@@ -261,6 +293,7 @@ class FeedForward(nn.Module):
         self.w3 = nn.Linear(args.dim, hidden_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.debug: print("FeedForward input shape", x.shape)
         # (S(XW1) * XV)XW2 = (ss)XW2; goal shape: (B, seq_len, Dim) => (B, seq_len, Dim)
         # (B, seq_len, Dim) w1=> (B, seq_len, Hidden_Dim)
         xw1 = self.w1(x)
@@ -279,27 +312,36 @@ class TransformerBlock(nn.Module):
     # here for simplicity, we did not include MoE
     def __init__(self, args: ModelArgs):
         super().__init__()
+        self.debug = args.debug
         self.n_head = args.n_heads
         self.dim = args.dim
         self.hidden_dim = args.hidden_dim
-        # Model Components
+        # RMS Normalization before Attention & FFN
+        self.rms_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        # Self-Attention Layer
         self.attention = SelfAttention(args)
-        self.feed_forward = FeedForward(args)
-        # RMS Normalization before Attention
-        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
-        # RMS Normalization before Feed Forward
-        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        # Feed Forward Layer (with MoE support)
+        self.feed_forward: nn.Module
+        if args.moe is not None:
+            self.feed_forward = MoE(
+                experts=[FeedForward(args=args) for _ in range(args.moe.n_experts)],
+                gate=nn.Linear(args.dim, args.moe.n_experts, bias=False),   # default to linear
+                moe_args=args.moe
+            )
+        else:
+            self.feed_forward = FeedForward(args)
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor) -> torch.Tensor:
+        if self.debug: print("TransformerBlock input shape", x.shape)
         # start_pos: the position of the token in the sequence we are dealing with
         # because dealing with only 1 token at a time
         # (B, seq_Len, dim) + (B, seq_Len, dim) => (B, seq_Len, dim) with residual connection
         h = x + self.attention.forward(
-            self.attention_norm(x), start_pos, freqs_complex
+            self.rms_norm(x), start_pos, freqs_complex
         )
         # (B, seq_Len, dim) + (B, seq_Len, dim) => (B, seq_Len, dim)
         out = h + self.feed_forward.forward(
-            self.ffn_norm(h)
+            self.rms_norm(h)
         )
         return out
 
@@ -309,6 +351,7 @@ class Transformer(nn.Module):
         super().__init__()
         assert args.vocab_size > 0, "vocab size should be set"
         self.args = args
+        self.debug = args.debug
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
         # input tokens embedding (note: vocab_size is handled internally by nn.Embedding)
@@ -321,7 +364,7 @@ class Transformer(nn.Module):
         # output layer
         self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
         # precomputed frequencies for ROPE positional encoding (https://arxiv.org/pdf/2104.09864)
-        self.freqs_complex = precompute_theta_pos_frequencies(   # to precompute the sin and cos in the paper
+        self.freqs_complex = self.precompute_theta_pos_frequencies(   # to precompute the sin and cos in the paper
             self.args.head_dim, self.args.max_seq_len * 2,
             device=self.device, theta=args.rope_theta
         )
@@ -341,6 +384,7 @@ class Transformer(nn.Module):
         note that with the KV Cache, only need the latest tokens, no need all tokens: info about previous tokens are saved in the cache
         NOTE: this is only for inference, not training (in training there's no KV cache)
         """
+        if self.debug: print("Transformer input shape", tokens.shape)
         # (B, Seq_len)
         batch_size, seq_len = tokens.shape
         assert seq_len == 1, "One token at a time at inference time"
@@ -357,6 +401,27 @@ class Transformer(nn.Module):
         # Output layer
         output = self.output(h)
         return output
+
+    def precompute_theta_pos_frequencies(
+            self, head_dim: int, seq_len: int, device: torch.device, theta: float
+    ) -> torch.Tensor:
+        # note: here seq_len is actual max_seq_len * 2
+        assert head_dim % 2 == 0, "head_dim must be even as proposed in https://arxiv.org/pdf/2104.09864"
+        # theta parameter = a sequence according to the paper
+        # theta_i = 10000^(-2(i-1)/dim) for i in range(1, dim / 2 + 1)
+        # shape (both theta_denominator and theta): (head_dim / 2)
+        theta_numerator = torch.arange(0, head_dim, 2).float()
+        theta = 1.0 / (theta ** (theta_numerator / head_dim)).to(device)
+        # build the "m" in the paper (aka the positions)
+        # shape: (seq_len)
+        m = torch.arange(seq_len, device=device)
+        # Multiply each theta by each position using the outer product (for all possible combinations of the two)
+        # Shape: (Seq_Len) outer_product* (Head_Dim / 2) -> (Seq_Len, Head_Dim / 2)
+        freqs = torch.outer(m, theta).float()
+        # Compute the complex number polar form: c = R * exp(m * theta) w/ R = 1
+        # (seq_len, head_dim / 2) -> (seq_len, head_dim / 2)
+        freqs_complex = torch.polar(torch.ones_like(freqs), freqs)
+        return freqs_complex
 
 
 def main():
