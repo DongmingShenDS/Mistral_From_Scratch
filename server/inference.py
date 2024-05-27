@@ -47,7 +47,7 @@ transformer = Transformer(
 
 ## inference with cache
 
-encoded_prompts = [[1, 2], [4, 5, 6], [2, 3]]
+encoded_prompts = [[1, 2], [4, 5, 6, 2, 3]]
 generated_sequences = generate(
     encoded_prompts=encoded_prompts,
     model=transformer,
