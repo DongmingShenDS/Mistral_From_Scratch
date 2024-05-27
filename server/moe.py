@@ -16,6 +16,7 @@ class MoeArgs(Serializable):
 class MoeLayer(nn.Module):
     def __init__(self, experts: List[nn.Module], gate: nn.Module, moe_args: MoeArgs):
         super().__init__()
+        print("instantiate moe")
         assert len(experts) > 0
         self.experts = nn.ModuleList(experts)
         self.gate = gate

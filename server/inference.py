@@ -9,7 +9,7 @@ args = ModelArgs(
     n_layers=4,
     head_dim=4,
     hidden_dim=20,
-    n_heads=4,
+    n_heads=2,
     dim=16,            # embedding dimension for each input token
     n_kv_heads=2,
     norm_eps=1e-6,
@@ -42,15 +42,15 @@ print(f"Total trainable parameters in the model: {total_params}")
 input = torch.tensor([args.vocab_size - 1] * (args.dim * args.max_batch_size)).to(device)
 seqlens = [args.dim] * args.max_batch_size  # Assuming all sequences are of maximum length for simplicity
 output = transformer(input, seqlens)
-# print(output)
+print(output)
 
-encoded_prompts = [[1, 2, 3, 1, 2, 5, 7], [4, 5, 6, 9, 4, 5, 6, 9]]
-generated_sequences = generate(
-    encoded_prompts=encoded_prompts,
-    model=transformer,
-    max_tokens=20,
-    temperature=0.8,
-    eos_id=None  # Replace with an appropriate eos_id if available
-)
-print(generated_sequences)
-print(generated_sequences.shape)
+# encoded_prompts = [[1, 2, 3, 1, 2, 5, 7], [4, 5, 6, 9, 4, 5, 6, 9]]
+# generated_sequences = generate(
+#     encoded_prompts=encoded_prompts,
+#     model=transformer,
+#     max_tokens=20,
+#     temperature=0.8,
+#     eos_id=None  # Replace with an appropriate eos_id if available
+# )
+# print(generated_sequences)
+# print(generated_sequences.shape)
